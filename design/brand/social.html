@@ -1,0 +1,39 @@
+<!doctype html><meta charset="utf-8">
+<style>
+  *{box-sizing:border-box;margin:0}
+  html,body{width:1280px;height:640px;background:#F2F2F7;font-family:Inter,"Segoe UI Variable Display","Segoe UI",sans-serif;color:#1C1C1E;overflow:hidden}
+  .stage{position:relative;width:1280px;height:640px;overflow:hidden}
+  .rings i{position:absolute;border-radius:50%;transform:translate(-50%,-50%);left:930px;top:330px}
+  .copy{position:absolute;left:80px;top:96px}
+  .tag{display:inline-flex;gap:10px;align-items:center;font-weight:600;font-size:22px;color:#6b6b72;background:#fff;border-radius:999px;padding:9px 20px;box-shadow:0 2px 10px #0001}
+  .tag b{width:10px;height:10px;border-radius:50%;background:#34C77B}
+  h1{font-size:150px;line-height:.9;letter-spacing:-6px;font-weight:800;margin-top:26px}
+  h1 span{background:linear-gradient(95deg,#FF9A6B,#F5B83D);-webkit-background-clip:text;color:transparent}
+  p{font-size:30px;line-height:1.3;color:#6b6b72;margin-top:24px;width:560px;font-weight:500}
+  .island{position:absolute;left:740px;top:56px;width:380px;height:80px;border-radius:40px;background:#0c0c0e;color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 34px;font-weight:600;font-size:27px;box-shadow:0 16px 36px #0003}
+  .island .d{width:14px;height:14px;border-radius:50%;background:#F5B83D;margin-right:14px}
+  .island .t{color:#FFE9B0;font-variant-numeric:tabular-nums}
+  .lumi{position:absolute;left:700px;top:190px;width:460px;filter:drop-shadow(0 34px 30px #d9a98d66)}
+  .skin{position:absolute;filter:drop-shadow(0 14px 14px #0002)}
+</style>
+<div class="stage">
+  <div class="rings">
+    <i style="width:760px;height:760px;background:#FFE9DE"></i><i style="width:600px;height:600px;background:#FFE0D0"></i>
+    <i style="width:440px;height:440px;background:#FFD9C4"></i>
+  </div>
+  <div class="copy">
+    <span class="tag"><b></b>Free for Windows</span>
+    <h1>Lumi<br><span>Island</span></h1>
+    <p>A tiny AI pet for your desktop.</p>
+  </div>
+  <div class="island"><span style="display:flex;align-items:center"><i class="d"></i>Focus</span><span class="t">24:10</span></div>
+  <svg class="lumi" viewBox="0 0 480 400" xmlns="http://www.w3.org/2000/svg">
+    <defs><radialGradient id="b" cx="30%" cy="22%" r="85%"><stop offset="0" stop-color="#FFEBDF"/><stop offset=".55" stop-color="#FFD9C4"/><stop offset="1" stop-color="#F0BCA2"/></radialGradient></defs>
+    <path d="M240 8 C392 0 474 100 470 212 C466 322 380 394 236 392 C92 390 8 322 12 208 C16 96 96 12 240 8Z" fill="url(#b)" stroke="#E2B7A0" stroke-width="7"/>
+    <ellipse cx="100" cy="246" rx="38" ry="22" fill="#FF8FA3" opacity=".6"/><ellipse cx="380" cy="246" rx="38" ry="22" fill="#FF8FA3" opacity=".6"/>
+    <path d="M128 190 Q160 130 192 190 M288 190 Q320 130 352 190" fill="none" stroke="#1C1C1E" stroke-width="17" stroke-linecap="round"/>
+  </svg>
+  <img class="skin" src="skin-cat.png" style="left:640px;top:410px;width:150px;transform:rotate(-8deg)">
+  <img class="skin" src="skin-star.png" style="left:1090px;top:390px;width:140px;transform:rotate(6deg)">
+  <img class="skin" src="skin-bunny.png" style="left:1120px;top:170px;width:120px;transform:rotate(7deg)">
+</div>

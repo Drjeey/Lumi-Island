@@ -14,6 +14,7 @@ The roadmap from the product audit, and a record of each phase as it's done. Ref
 | G | More feelings and play: new emotions, interactions, dancing, and Try a reaction in Settings | Done, 31 Oct 2026 |
 | H | Claude Code and Codex on the island: run them, follow your own sessions as node states, and Lumi's coding look | Done, 1 Nov 2026 |
 | I | Skins: twelve full characters for Lumi, a picker in Settings, and seasonal dress-up | Done, 6 Nov 2026 |
+| Launch | Fixes from the friend's review: readable answers, local time, honest saves and media results, privacy defaults | Done, 23 Nov 2026 (not yet tried in the running app's UI; see that section) |
 
 ---
 
@@ -1051,3 +1052,105 @@ ISCC installer\LumiIsland.iss        (writes installer\Output\LumiIsland-Setup-1
 
 **Testing**
 - Looked at the rendered PNGs. The rebuilt exe has an icon resource and the Setup.exe (75 MB) compiled. I haven't looked at the icon in Explorer or the taskbar yet.
+
+## Launch fixes from the friend's review (23 Nov 2026)
+
+From the two review PDFs ("Lumi Island Improvement and Security Review" and "Launch Priorities Overview", 17 Nov 2026). This covers the launch-week list; IDs are the review's.
+
+| ID | Item | What changed | Files |
+|---|---|---|---|
+| UX01, SEC05 | Answers showed literal `*` and `-` | Lumi's answers get light Markdown (paragraphs, headings, bullet and numbered lists, bold, italic, code, code blocks) while streaming, when finished and in reopened history. It's built with `createElement` and `textContent` only, never `innerHTML`, so model text can't become markup; links show as their text plus the address and are never clickable. Your own messages stay plain text. Code blocks scroll sideways instead of widening the panel. | `ui/lumi-markdown.js` (new), `ui/island.js`, `ui/island.css`, `ui/island.html` |
+| UX02, A1 | Time answered in UTC | New `current_time` tool: the PC's local date and time, 24-hour with a colon, with the Windows time-zone name and UTC offset (e.g. "Monday 23 November 2026, 16:05 (E. Africa Standard Time, UTC+03:00)"). No location lookup. Lumi's instructions say to always use it and never give UTC. | `lumi/tools.py`, `lumi/chat.py` |
+| UX09 | "Saved" showed before the note was written | `save_note` returns `{'ok'}` only after the write; the panel shows Saved or "Couldn't save" (in red) from that, keeps your text, and retries on the next keystroke. Every writer (panel, Lumi's `add_to_note`, the command bar's `note ...`) goes through `lumi/notes.py`: one lock, and an atomic temp-file-then-replace write so an interrupted save leaves the old note whole. Leaving the panel or quitting flushes typing that hadn't been saved yet. If Lumi adds a line while the note is open, the line is added to what you're typing rather than one overwriting the other. | `lumi/notes.py` (new), `lumi/api.py`, `lumi/tools.py`, `ui/island.js`, `ui/island.css` |
+| UX07 | Pause could start paused music | Play and pause are separate (`try_play_async` / `try_pause_async`); only the music panel's middle button toggles. The request waits up to 2 s for the app's answer. Results: "Paused" only when the app said yes; "Already paused" / "Already playing" without sending anything; "Nothing is playing" instead of pressing the play/pause key; "Sent pause (the app didn't confirm)" when only a media key was possible; a refusal is a failed receipt. The command bar's `play` and `pause` now do what they say and show the result. | `lumi/media.py`, `lumi/tools.py`, `lumi/api.py`, `ui/island.html` |
+| UX11, A8 | "Done" with work unfinished; stuck Send | Running out of tool rounds now says some of it wasn't done. An empty reply after tools says what actually happened ("Some of that worked, but not all: ...", "That didn't work: ...") instead of "Done.". If the bridge call itself fails, the chat ends the request, restores Send, offers Try again and puts your question back in the box. Every error now offers Try again. | `lumi/chat.py`, `ui/island.js` |
+| UX03, UX04 | Spotify song / YouTube dead ends | New `search_web` tool (web, youtube or spotify only): fixed HTTPS addresses with the words URL-encoded in. Its receipt says "Opened a YouTube search", and Lumi is told it can't start a particular song and must never say a search is playing. `open_app` failing now points to the website. | `lumi/tools.py`, `lumi/chat.py` |
+| SEC02 | Any `http://` server got your key | `custom_url` must be `https://` unless the host is this PC (`localhost`, `127.x`, `::1`, parsed exactly, so `localhost.evil.example` is remote). Addresses with a user name or password, a `#` fragment, a bad port or another scheme are refused, in Settings and again when the provider starts (config.json can be hand-edited). | `lumi/providers/__init__.py`, `lumi/window.py` |
+| SEC03 | One "seen" flag covered every later change | The voice notice remembers who it described (Google speech, the chosen provider or server host, Microsoft or Windows voice) and shows again when any of them changes. Old `true` markers count as changed, so everyone sees it once more. "Your own model on this PC" is decided by the parsed host, not a substring. | `lumi/api.py`, `lumi/config.py` |
+| SEC04 | Coding-session watching on by default | `agent_watch` defaults to off for new installs (existing config.json files keep what they have). The Settings text says it reads chat titles too. | `lumi/config.py`, `lumi/agents.py`, `ui/settings.html`, `README.md` |
+| SEC01 | README told people to bypass SmartScreen | Replaced with an honest note: the installer isn't signed yet, download only from Releases, check the SHA-256 with `Get-FileHash`, and don't run it if Defender reports a threat. | `README.md` |
+
+**How it was tested**
+- **55 Python checks** (a throwaway script, not in the repo):
+  - **Clock:** fixed clocks in EAT, a half-hour zone (+05:30) and a negative one (-03:30), plus the real clock.
+  - **Addresses:** 15 accepted or refused, including `localhost.evil.example`, a LAN `http://` address, embedded credentials and a bad port. The provider also refuses a plain-HTTP LAN server at startup.
+  - **Notes:** save, append and an empty note; 20 appends from different threads, all kept; no temp file left behind; a failed write reaches `save_note` as `{'ok': False}` and `add_to_note` as "Couldn't save".
+  - **Media:** pause when already paused and play when already playing send nothing, and pause with no session presses no key. With a fake session, pause calls `try_pause_async`, and a refused play is reported as failed, not done.
+  - **Search:** the YouTube, Spotify and Google addresses are built correctly, with `/ ? # &` encoded, and an unknown site is refused. Tool schemas list `current_time` and `search_web` (`site` optional).
+  - **Endings:** when tool rounds run out, the reply says some of it wasn't done, and empty replies say what actually happened.
+- **18 renderer checks** (Node, with a minimal fake DOM). They cover the screenshot-1 list, headings, numbered lists that don't start at 1, code blocks, links, `<img onerror>`, `<script>`, `javascript:` links, HTML inside bold, unclosed marks while streaming, snake_case, `2 * 3 * 4`, and unclosed code fences. Only the allowed element types are ever created. This test also caught a bug before release: the recursion for bold and italic reset a shared regex position and looped forever. It's fixed with `matchAll`.
+- **Syntax:** `node --check` on both scripts, `py_compile` on every changed Python file, and `import lumi.window`.
+- **The real app (from source):** started and ran for 15 seconds with no errors.
+
+**Second test round (same day): the real UI, real Gemini and real Windows media**
+- **The island page** (the real `island.html`, `island.js` and CSS, served locally, with a fake Python bridge):
+  - **Formatting:** the screenshot-1 answer shows real bullets, a numbered list, bold, italic and inline code, in reopened history as well as new replies. Your own `**text**` and `<b>` stay literal. An `<img onerror>` in a reply shows as text and never runs.
+  - **Errors:** a provider error and a bridge call that throws both restore Send, put the question back in the box and offer Try again.
+  - **Notes:** no "Saved" before the write, "Saved" after it. A failed save shows "Couldn't save" in red, stays visible and keeps your text, and leaving the panel retries it. A line Lumi adds while you type is merged with your typing and saved together.
+- **Real Gemini** (gemini-3.5-flash, with -lite as backup), with apps, browser and media recorded rather than run. Asked the review's questions, twice:
+  - **Time:** it called `current_time` and answered "22:52", matching the PC clock.
+  - **Spotify song:** it opened Spotify plus a Spotify search, and didn't claim the song was playing.
+  - **YouTube:** `open_app` failed and it opened a YouTube search keeping "Sky Walker Miguel" instead.
+  - **Pause:** it sent `pause`, never a toggle.
+  - **Note:** the line was written to the file.
+- **Windows media:** a paused Netflix session is the only player open on this PC.
+  - Pause while it's already paused sends nothing and says "Already paused".
+  - Play was accepted by Netflix but nothing started.
+
+**Fixed in that round**
+- **Netflix said yes to play and stayed paused, which would have shown "Playing".** After play or pause, Lumi now waits up to about 2 s for the session to change. If it doesn't, the receipt fails with "The app accepted it but is still paused".
+- **An action done, then the reply failed:** Gemini timed out after the pause had happened, so the chat said "Gemini didn't answer… try again", and Try again would have paused a second time. It now says "Done: Paused. But Gemini didn't finish replying." with no Try again. This was seen live during a 503 (Gemini overloaded): "Done: Opening Spotify; Opened a Spotify search…".
+- **Try again resent the wrong question:** each button resent the latest question rather than its own. Each now resends its own question and clears the box when it does.
+- **Lost note text:** reopening the note after a failed save replaced your unsaved text with the file. Unsaved text now stays.
+- **Spotify request opened a YouTube search:** the backup model chose YouTube. `search_web`'s description now says Spotify for Spotify songs; the next run opened a Spotify search.
+- **Light scrollbar:** code blocks had a light default scrollbar on the dark panel. It now matches the chat's own scrollbar.
+
+**Not tested**
+- A real successful play or pause transition (no player that responds was open; covered with a fake session that changes state).
+- The real pywebview window itself (the page ran in a browser with a fake bridge; the app was launched and runs without errors, but I didn't click through its window).
+- Voice, the voice notice coming back after a provider change, and the packaged installer build.
+
+**Seen in testing, not fixed:** after a provider error, Lumi starts a fresh conversation, so a follow-up like "play it there" forgets the song (review items UX10/A7).
+
+**Known limit:** Windows' C runtime reads the time zone once, so if you change the Windows time zone while Lumi is running, `current_time` keeps the old zone until Lumi restarts.
+
+**Still open from the review:** a signed installer or a Store route, a clean-PC install test, pinned dependencies and CI, provider-specific error messages, a capabilities view, steadier chat scrolling, and the larger items (ChatGPT sign-in, Realtime voice, closing apps).
+
+## Fix: white flashes and a grey slab behind the island (24 Nov 2026)
+
+| Problem | Cause | Fix | Files |
+|---|---|---|---|
+| A light grey (`#F0F0F0`) rectangle, the size of the island's whole window, flashed for one frame behind the island. It happened in about 1 launch in 10, and again when the island changed shape. | The hit-area bitmap that makes the island clickable was 32-bit with an alpha channel. WinForms counts that as a see-through background image. On a window with no parent, it then fills the window with `SystemColors.Control` (`#F0F0F0`) before drawing the image. The form isn't double-buffered, so that fill sometimes reached the screen. | The bitmap is now 24-bit with no alpha. Its shapes were always solid, so nothing else changes. | `lumi/window.py` |
+| After Windows broadcast a settings change (changing theme, accent or wallpaper, or running `setx`, which the README suggests), the island's whole see-through area turned into a grey Mica slab. It stayed until Lumi restarted. | pywebview puts the Mica backdrop back on in dark mode every time Windows broadcasts a settings change. Lumi only removed it once, at startup. | Lumi also listens for those broadcasts. Its handler runs after pywebview's and removes the backdrop again. | `lumi/window.py` |
+| The see-through setup ran after the window had already been shown once. | pywebview shows a transparent window, hides it and shows it again. Lumi's setup ran from `shown`, on another thread, after that first show. | The setup now runs in `before_show`, on the window's own thread, before the window is ever shown. If that fails, `shown` still does it. This one is a precaution: no flash was ever caught at that moment. | `lumi/window.py` |
+| Every switch that's on slid across, and the colour preview faded in, each time Settings opened. | The page draws first and the saved values arrive afterwards, so the switches' 0.15 s transitions animated. | The body starts with a `loading` class that turns transitions off. It's removed two frames after the values are in place. | `ui/settings.html`, `ui/settings.css`, `ui/settings.js` |
+
+**How it was found and tested.** The real app was run from source while a script recorded the top of the screen at about 25 frames a second, including layered windows. A frame counted as a flash if more than 5% of it was light grey. A second script logged the window's lifecycle with the same clock: shown, navigation, each hit-area change, each resize and each push.
+- **Before:** 18 of 175 launches flashed, with 5 to 7 seconds recorded each. Every flash came 50 to 200 ms after a hit-area repaint. The frames were exactly RGB(240, 240, 240).
+- **Ruled out by measurement, not shipped:** setting `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` (3 of 30 and 2 of 30 still flashed), and starting the window at its idle height so it doesn't shrink after one second (2 of 30, with no resizes). The first 0 of 30 with the environment variable was luck.
+- **Bisection:** with hit-area painting turned off, 0 of 30 launches flashed.
+- **After the fix:** 0 of 60 launches flashed, across 1,330 hit-area changes and 67 resizes. Six rounds of clicking the island and pressing Esc showed no light frames, and the panel opened each time, so the 24-bit bitmap still catches clicks.
+- **Mica:** three `WM_SETTINGCHANGE "ImmersiveColorSet"` broadcasts. Before the fix, a slab appeared and stayed. After it, nothing changed on screen (0.1 to 0.2% of pixels, the same as noise).
+- **Settings window:** opened and closed three times by the app with no light frames, and it opened dark with its switches already set. In a browser with a stand-in bridge, a saved-on switch passed through 9 positions before the fix and jumped straight to its place after it. Clicking a switch still animates.
+
+**Not tested:** light Windows theme, scaling above 100%, a second display, and the installed (packaged) build.
+
+## Feedback round: first-run AI setup, focus feedback, agent alerts (25 Nov 2026)
+
+Three items from a hands-on review of the running app.
+
+| Item | What changed | Files |
+|---|---|---|
+| Focus gave no feedback while an agent ran | `focus 25` and `break` now confirm ("Focus started · 25 min") and the timer then stays on the island. | `lumi/api.py` |
+| An agent hid the focus timer, music and everything else | New setting "While focus and an agent both run" (`island_priority`, default `focus`). With focus, the timer stays and a small blue badge shows an agent is working; clicking the badge opens the Agents panel. An agent that just finished or failed still gets its moment first. Added a `dashboard` command so the dashboard is always reachable. | `ui/island.js`, `ui/island.html`, `ui/island.css`, `ui/settings.*`, `lumi/config.py`, `lumi/window.py`, `lumi/api.py` |
+| Chat did nothing until you found an API key in a long Settings page | New **AI and voice** page (moved out of the long Lumi page, which is now just **Lumi**). While there's no AI, it opens with a "Set up AI" banner: paste a key, open the provider's key page, or switch to a model on this PC (Ollama). The tab shows a dot and the other pages a one-line pointer. Lumi offers once, on the island, to set chat up; chat errors and the key card now open Settings on that page. The "Get a key" links come from a fixed list in Python, never from the page. | `ui/settings.*`, `ui/island.js`, `lumi/api.py`, `lumi/window.py` |
+| Agent finish alerts | The "is done" / "hit a problem" bubble now also covers sessions you ran yourself (when Show Claude Code and Codex sessions is on) once they ran 20 seconds or more, and names the chat. | `ui/island.js` |
+
+**Not built:** approving an agent's permission request from the island. Sessions started from the island run without prompts, and for sessions you run yourself the logs don't say reliably when one is waiting, so a "needs approval" alert would be a guess.
+
+**Tested**
+- Python: `ai_state` for each provider with and without a key; the local-server probe (listening, closed, remote, empty); the key-page link refuses anything not in the list; the AI offer fires once; focus and break confirmations; `dashboard` shows in the command bar; the Settings page name is limited to known pages.
+- Real app: `focus 25` from the command bar while an agent was running showed "Focus started · 25 min", then the countdown with the agent badge.
+- Settings page in a browser with a stand-in bridge: the banner, tab dot and General pointer appear with no key; "Use a model on this PC" (server down) says nothing is running and offers Ollama; saving a key hides all three; "Get a key" asks Python to open the right page.
+
+**Not tested:** the real Settings window opening on the AI page, the first-run card on a fresh profile, a real Ollama server, the badge click, the "Agent first" priority in the running app, and finish alerts for sessions run outside the island.

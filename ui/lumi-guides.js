@@ -17,7 +17,7 @@ window.LUMI_GUIDES = [
         steps: [
             { panel: 'chat', spot: '#chat-input', text: 'Type a question here and press [[Enter]]. I answer here, and I remember the last few things we talked about.' },
             { panel: 'chat', spot: '#chat-input', text: 'I can also do things: "start a 25 minute focus", "add milk to my note", "open Spotify", "turn the volume down".' },
-            { panel: 'idle', body: 'show-mic', text: 'Rather talk? Hover over me and press the mic, then just speak. Settings has my voice under "Lumi and voice".' },
+            { panel: 'idle', body: 'show-mic', text: 'Rather talk? Hover over me and press the mic, then just speak. Settings has my voice under "AI and voice".' },
             { panel: 'idle', text: 'Press [[Esc]] to stop me in the middle of an answer.' }
         ]
     },
@@ -75,7 +75,7 @@ window.LUMI_GUIDES = [
     {
         id: 'looks', title: 'Lumi\'s looks and sounds', blurb: 'Skins, colours, seasonal looks and sound effects',
         steps: [
-            { panel: 'idle', text: 'I come in different skins and colours. They live in Settings, under "Lumi and voice".' },
+            { panel: 'idle', text: 'I come in different skins and colours. They live in Settings, under "Lumi".' },
             { panel: 'idle', settings: true, text: 'I\'ve opened Settings for you. Turn on seasonal looks for a new Christmas outfit each day, and sounds if you\'d like little effects.' }
         ]
     },

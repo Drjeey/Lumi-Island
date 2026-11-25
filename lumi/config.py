@@ -69,12 +69,13 @@ DEFAULT_CONFIG = {
     "voice_name": "en-US-AvaNeural",   # one of speech.VOICES
     "voice_mode": "standard",          # "standard": record, then reply; "live": streaming conversation (Gemini Live)
     "live_model": "gemini-2.5-flash-native-audio-preview-09-2025",
-    "agent_watch": True,               # follow Claude Code and Codex sessions running on this PC (reads their local logs)
+    "agent_watch": False,              # follow Claude Code and Codex sessions running on this PC (reads their local logs); off until you turn it on
+    "island_priority": "focus",        # what the compact island shows while both run: "focus" (timer, with a small agent badge) or "agent"
     "agent_kind": "claude",            # the agent picked last in the Agents panel: claude or codex
     "agent_mode": "read",              # "edit": the agent may change files in its folder; "read": it may only look (the safe start)
     "agent_edit_folders": [],          # folders you've said yes to an agent editing; the first edit run anywhere else asks first
     "agent_cwd": "",                   # the folder the agent worked in last
-    "voice_notice_seen": False,
+    "voice_notice_seen": False,        # the destinations the voice notice last described; it shows again when they change
     "live_notice_seen": False,
     "onboarding_done": False,
 }
@@ -92,7 +93,7 @@ EDITABLE = {
     'motion': str, 'lumi_visible': bool, 'hotkey': str, 'voice_mode': str, 'voice_engine': str, 'voice_name': str, 'live_model': str,
     'ai_provider': str, 'gemini_model': str, 'gemini_backup_model': str, 'claude_model': str, 'openai_model': str, 'custom_model': str, 'custom_url': str,
     'lumi_color': str, 'skin': str, 'seasonal_skins': bool, 'sounds': bool, 'sound_volume': int, 'celebrations': bool, 'weekly_summary': bool, 'lumi_idle': str,
-    'agent_watch': bool,
+    'agent_watch': bool, 'island_priority': str,
 }
 
 # Lumi's colour presets (soft, light tints so the dark eyes stay readable)

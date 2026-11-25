@@ -8,12 +8,13 @@ from pathlib import Path
 
 import webview
 
-from . import credentials, providers
+from . import credentials, notes, providers
 from .agents import AGENTS
-from .config import EDITABLE, LIVE_VOICE_NOTICE, LUMI_COLORS, NATURAL_VOICE_NOTICE, NOTES_PATH, SKINS, VOICE_NOTICE
+from .config import EDITABLE, LIVE_VOICE_NOTICE, LUMI_COLORS, NATURAL_VOICE_NOTICE, SKINS, VOICE_NOTICE
 from .providers import PROVIDERS
 from .speech import VOICES
 from .system import SystemHelpers, Volume
+from .tools import ToolFailed, media_result
 
 # Command-bar keywords, matched on the first word as you type
 COMMANDS = [
@@ -23,14 +24,15 @@ COMMANDS = [
     ('chat', 'Chat with Lumi', 'lumi'),
     ('talk', 'Talk to Lumi', 'mic'),
     ('summary', 'Show your focus summary', 'hourglass'),
-    ('play', 'Play or pause', 'playpause'),
-    ('pause', 'Play or pause', 'playpause'),
+    ('play', 'Play', 'playpause'),
+    ('pause', 'Pause', 'playpause'),
     ('next', 'Next track', 'next'),
     ('previous', 'Previous track', 'prev'),
     ('music', 'Show what\'s playing', 'music'),
     ('claude', 'Run Claude Code', 'agent'),
     ('codex', 'Run Codex', 'agent'),
     ('agents', 'Show agent sessions', 'agent'),
+    ('dashboard', 'Open the dashboard', 'settings'),
     ('settings', 'Open Settings', 'settings'),
     ('quit', 'Quit Lumi Island', 'power'),
 ]
@@ -65,12 +67,51 @@ QUESTION_WORDS = {'what', 'why', 'how', 'who', 'when', 'where', 'which', 'is', '
 
 
 
+# Where to get a key for each provider (opened from Settings and never taken from the page), and Ollama's download
+KEY_PAGES = {'gemini': 'https://aistudio.google.com/apikey', 'claude': 'https://console.anthropic.com/settings/keys',
+             'openai': 'https://platform.openai.com/api-keys', 'ollama': 'https://ollama.com/download'}
+
+
+def ai_state(config):
+    """Whether Lumi can chat yet, for the first-run offer and Settings' "Set up AI" banner."""
+    name = providers.chosen(config)
+    info = PROVIDERS[name]
+    has_key = bool(credentials.get_api_key(name))
+    # Claude's SDK can also use a signed-in profile, so a missing key doesn't prove it won't work
+    ready = (not info['needs_key']) or has_key or name == 'claude'
+    return {'ready': ready, 'provider': name, 'label': info['label'], 'needs_key': info['needs_key'], 'has_key': has_key,
+            'key_url': name in KEY_PAGES}
+
+
+def _local_server_running(url):
+    """True if something is listening where the custom server address points (Ollama's default is localhost:11434),
+    False if nothing is, and None for a server on another computer, which isn't probed."""
+    import socket
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(url or '')
+        host, port = parts.hostname, parts.port or (443 if parts.scheme == 'https' else 80)
+        if not host:
+            return False
+        if not providers.is_loopback(host):
+            return None
+        with socket.create_connection((host, port), timeout=0.4):
+            return True
+    except (OSError, ValueError):
+        return False
+
+
 def _whom(config, provider):
     """Where typed and spoken words go, for the privacy notice."""
     if provider == 'custom':
-        url = config.get('custom_url') or ''
-        return 'your own model on this PC' if '//localhost' in url or '//127.0.0.1' in url else 'the server at ' + url
+        return providers.describe_custom_url(config.get('custom_url'))
     return PROVIDERS[provider]['label']
+
+
+def _voice_destinations(config, provider):
+    """Everyone standard voice sends something to. The notice is shown again whenever this changes."""
+    return '|'.join(['google-speech', _whom(config, provider),
+                     'microsoft-voice' if config.get('voice_engine') == 'natural' else 'windows-voice'])
 
 class IslandAPI:
     """Methods the island page can call. Underscore names keep pywebview from listing (and recursively scanning) them;
@@ -84,7 +125,16 @@ class IslandAPI:
         c = self._ctrl
         return {'prefs': c.prefs(), 'onboarding': not c.config.get('onboarding_done'), 'media': c.media.state, 'agents': c.agents.state(),
                 'hotkey_error': c.hotkey_error, 'greeting': self._daily_greeting(), 'offer_sounds': self._offer_sounds(),
-                'guides': self._guides_state()}
+                'guides': self._guides_state(), 'offer_ai': self._offer_ai_setup()}
+
+    def _offer_ai_setup(self):
+        # Lumi offers to help set up chatting once, when there's no AI behind it yet; asking counts, answered or not
+        c = self._ctrl.config
+        if c.get('ai_setup_offered') or ai_state(c)['ready']:
+            return False
+        c['ai_setup_offered'] = True
+        c.save()
+        return True
 
     # --- guides ---
     def _guides_state(self):
@@ -143,9 +193,7 @@ class IslandAPI:
     def open_music(self): self._ctrl.push('music', self._ctrl.media.state)
     def open_focus(self): self._ctrl.push('focus', self._ctrl.focus.state())
     def open_notes(self):
-        content = ""
-        if NOTES_PATH.exists(): content = NOTES_PATH.read_text(encoding='utf-8')
-        self._ctrl.push('notes', {'note': content})
+        self._ctrl.push('notes', {'note': notes.read()})
     def open_chat(self):
         chat = self._ctrl._chat
         self._ctrl.push('chat', {'messages': chat.messages if chat else []})
@@ -153,19 +201,27 @@ class IslandAPI:
         self._ctrl.push('agents_panel', dict(self._ctrl.agents.state(), pick=agent, prompt=prompt))
     def open_command_bar(self): self._ctrl.open_command_bar()
     def command_closed(self): self._ctrl.restore_foreground()
-    def open_settings(self): self._ctrl.open_settings()
+    def open_settings(self, page=None): self._ctrl.open_settings(page if page in ('general', 'lumi', 'ai', 'guides', 'about') else None)
     def hide_for(self, minutes): self._ctrl.hide_for(float(minutes))
     def quit(self): self._ctrl.quit()
 
     # --- actions ---
     def save_note(self, text):
-        try: NOTES_PATH.write_text(text, encoding='utf-8')
-        except Exception as e: print(f"Note Save Error: {e}")
+        """Returns {'ok': True} only once the note is on disk; the panel shows Saved or Couldn't save from this."""
+        try:
+            notes.save(str(text))
+            return {'ok': True}
+        except OSError as e:
+            print(f"Note Save Error: {e}")
+            return {'ok': False}
     def scroll(self, delta):
         if not self._ctrl.config.get('scroll_volume', True):
             return None
         return Volume.change(-1 if delta > 0 else 1)
-    def media(self, action): self._ctrl.media.control(action)
+    def media(self, action):
+        """The music panel's buttons: its middle button is a play/pause toggle, shown with the right icon."""
+        if action in ('toggle', 'play', 'pause', 'next', 'prev'):
+            threading.Thread(target=self._ctrl.media.control, args=(action,), daemon=True).start()
     def start_focus(self, minutes): self._ctrl.focus.start(int(minutes))
     def start_break(self, minutes=5): self._ctrl.focus.start(int(minutes), kind='break')
     def stop_focus(self): self._ctrl.focus.stop()
@@ -178,9 +234,11 @@ class IslandAPI:
         # Live voice is Gemini Live; with any other provider the mic uses standard voice
         live = c.config.get('voice_mode') == 'live' and PROVIDERS[provider]['live']
         seen_key = 'live_notice_seen' if live else 'voice_notice_seen'
-        if not c.config.get(seen_key):
-            # First use: say where the audio goes before the mic ever opens
-            c.config[seen_key] = True
+        # Live voice only ever goes to Gemini; standard voice goes to whoever Settings picks now
+        destinations = 'gemini-live' if live else _voice_destinations(c.config, provider)
+        if c.config.get(seen_key) != destinations:
+            # First use, or someone new would get your voice or words: say where before the mic ever opens
+            c.config[seen_key] = destinations
             c.config.save()
             spoken = NATURAL_VOICE_NOTICE if c.config.get('voice_engine') == 'natural' else ''
             notice = LIVE_VOICE_NOTICE if live else VOICE_NOTICE.format(provider=_whom(c.config, provider), spoken=spoken)
@@ -295,22 +353,30 @@ class IslandAPI:
                 os.startfile('https://www.google.com/search?q=' + quote_plus(str(arg)))
                 return 'Searching the web'
             if ident == 'focus':
-                c.focus.start(int(arg or 25))
-                return None  # the focus countdown takes over the island
+                minutes = int(arg or 25)
+                c.focus.start(minutes)
+                return f'Focus started · {minutes} min'  # a short confirmation, then the countdown shows
             if ident == 'stop_focus': c.focus.stop(); return 'Focus stopped'
-            if ident == 'break': c.focus.start(5, kind='break'); return None
+            if ident == 'break': c.focus.start(5, kind='break'); return 'Break started · 5 min'
+            if ident == 'dashboard': threading.Timer(0.3, self.open_dashboard).start(); return None
             if ident == 'note':
-                existing = NOTES_PATH.read_text(encoding='utf-8') if NOTES_PATH.exists() else ''
-                NOTES_PATH.write_text((existing.rstrip('\n') + '\n' if existing.strip() else '') + str(arg), encoding='utf-8')
+                try:
+                    c.push('note_added', {'note': notes.append(str(arg)), 'line': str(arg)})
+                except OSError as e:
+                    print(f"Note Save Error: {e}")
+                    return "Couldn't save to your note"
                 return 'Added to your note'
             if ident == 'open_note': threading.Timer(0.3, self.open_notes).start(); return None
             if ident == 'chat': threading.Timer(0.3, self.open_chat).start(); return None
             if ident == 'guide' and arg in GUIDE_IDS: threading.Timer(0.4, c.push, args=('guide', {'id': arg})).start(); return None
             if ident == 'talk': threading.Timer(0.4, self.start_listening).start(); return None
             if ident == 'summary': threading.Timer(0.3, c.offer_weekly_summary, kwargs={'force': True}).start(); return None
-            if ident in ('play', 'pause'): c.media.control('play'); return None
-            if ident == 'next': c.media.control('next'); return None
-            if ident == 'previous': c.media.control('prev'); return None
+            if ident in ('play', 'pause', 'next', 'previous'):
+                action = 'prev' if ident == 'previous' else ident
+                try:
+                    return media_result(action, c.media.control(action))
+                except ToolFailed as e:
+                    return str(e)
             if ident == 'music': threading.Timer(0.3, self.open_music).start(); return None
             if ident == 'agent':
                 # Straight to work in the last folder; with no folder yet, the panel opens with the task filled in
@@ -374,6 +440,29 @@ class SettingsAPI:
             value = value.strip()
         error = self._ctrl.apply_setting(key, value)
         return {'ok': error is None, 'error': error}
+
+    def ai_status(self):
+        """Is there an AI behind Lumi yet? Drives the "Set up AI" banner; also says whether a local server is running."""
+        c = self._ctrl.config
+        state = ai_state(c)
+        if state['provider'] == 'custom':
+            state['server_running'] = _local_server_running(c.get('custom_url'))
+        return state
+
+    def open_key_page(self, which):
+        """Opens the page where you get a key (or download Ollama). Only addresses from KEY_PAGES, never one from the page."""
+        url = KEY_PAGES.get(which)
+        if not url:
+            return {'ok': False}
+        os.startfile(url)
+        return {'ok': True}
+
+    def use_local_model(self):
+        """Points Lumi at a model on this PC (Ollama's address unless you've set your own), which needs no key."""
+        error = self._ctrl.apply_setting('ai_provider', 'custom')
+        if not error and not self._ctrl.config.get('custom_url'):
+            error = self._ctrl.apply_setting('custom_url', 'http://localhost:11434/v1')
+        return {'ok': error is None, 'error': error, 'server_running': _local_server_running(self._ctrl.config.get('custom_url'))}
 
     def set_api_key(self, value, provider='gemini'):
         if provider not in PROVIDERS:

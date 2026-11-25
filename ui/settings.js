@@ -2,10 +2,16 @@ const $ = id => document.getElementById(id);
 const api = () => window.pywebview && window.pywebview.api;
 
 // --- NAVIGATION ---
-document.querySelectorAll('.nav').forEach(b => b.addEventListener('click', () => {
-    document.querySelectorAll('.nav').forEach(n => n.classList.toggle('selected', n === b));
-    document.querySelectorAll('.page').forEach(p => { p.hidden = p.id !== 'page-' + b.dataset.page; });
-}));
+function showPage(name) {
+    const nav = document.querySelector(`.nav[data-page="${name}"]`);
+    if (!nav) return;
+    document.querySelectorAll('.nav').forEach(n => n.classList.toggle('selected', n === nav));
+    document.querySelectorAll('.page').forEach(p => { p.hidden = p.id !== 'page-' + name; });
+}
+window.showPage = showPage;  // Python opens Settings straight on a page (for example the AI one on first run)
+document.querySelectorAll('.nav').forEach(b => b.addEventListener('click', () => showPage(b.dataset.page)));
+document.querySelectorAll('[data-goto]').forEach(b => b.addEventListener('click', () => showPage(b.dataset.goto)));
+if (location.hash) showPage(location.hash.slice(1));
 
 // --- SAVING ---
 function save(key, value, messageEl) {
@@ -54,8 +60,13 @@ function load() {
         $('ai_provider').value = values.ai_provider in providers ? values.ai_provider : 'gemini';
         syncProvider();
         if (hotkey_error) { $('msg-hotkey').textContent = hotkey_error; $('msg-hotkey').className = 'message error'; }
+        $('island_priority').value = values.island_priority === 'agent' ? 'agent' : 'focus';
         syncPositionRow();
         syncVoiceRow();
+        refreshAiStatus();
+    }).finally(() => {
+        // The saved values are drawn: from the next frame on, switches and the preview animate when you change them
+        requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove('loading')));
     });
 }
 
@@ -131,6 +142,49 @@ function syncVoiceRow() {
     else if (m.textContent.startsWith('Live voice needs')) m.textContent = '';
 }
 
+// "Set up AI": until Lumi has an AI behind it, a banner on the AI page, a dot on its tab and a pointer on the other pages
+const KEY_PAGE_NAMES = { gemini: 'Gemini', claude: 'Claude', openai: 'OpenAI' };
+async function refreshAiStatus() {
+    const st = await api().ai_status();
+    if (!st) return;
+    const setup = !st.ready || (st.provider === 'custom' && st.server_running === false);
+    $('ai-banner').hidden = !setup;
+    document.querySelectorAll('.setup-note').forEach(n => { n.hidden = !setup; });
+    document.querySelector('.nav[data-page=ai]').classList.toggle('needs-setup', setup);
+    if (!setup) return;
+    const local = st.provider === 'custom';
+    $('banner-title').textContent = local ? "Lumi can't reach your model yet" : 'Lumi needs an AI to chat';
+    $('banner-text').textContent = local
+        ? "Nothing is answering at your server address. Start Ollama (or your server), or paste a key to use an online model instead."
+        : st.key_url
+            ? `Paste a ${KEY_PAGE_NAMES[st.provider] || st.label} key to start chatting. Gemini has a free tier. The key is kept in Windows Credential Manager, never in a file.`
+            : 'Add a key for your provider below to start chatting.';
+    $('form-banner-key').hidden = local;
+    $('banner_key').placeholder = `Paste your ${KEY_PAGE_NAMES[st.provider] || st.label} key`;
+    $('banner-get-key').textContent = local ? 'Get Ollama' : `Get a ${st.provider === 'gemini' ? 'free ' : ''}key`;
+    $('banner-get-key').dataset.which = local ? 'ollama' : st.provider;
+    $('banner-get-key').hidden = !(local || st.key_url);
+    $('banner-local').hidden = local;
+}
+$('form-banner-key').addEventListener('submit', async e => {
+    e.preventDefault();
+    const value = $('banner_key').value.trim(), m = $('msg-banner');
+    if (!value) return;
+    const res = await api().set_api_key(value, (await api().ai_status()).provider);
+    m.textContent = res.ok ? 'Key saved. Lumi can chat now.' : res.error;
+    m.className = 'message ' + (res.ok ? 'ok' : 'error');
+    if (res.ok) { $('banner_key').value = ''; load(); }
+});
+$('banner-get-key').addEventListener('click', () => api().open_key_page($('banner-get-key').dataset.which));
+$('banner-local').addEventListener('click', async () => {
+    const res = await api().use_local_model(), m = $('msg-banner');
+    m.textContent = !res.ok ? res.error
+        : res.server_running !== false ? 'Using your own model. Lumi can chat now.'
+        : 'Switched to a model on this PC, but nothing is running there yet. Install Ollama, start it, and pull a model such as llama3.2.';
+    m.className = 'message ' + (res.ok && res.server_running !== false ? 'ok' : 'error');
+    load();
+});
+
 // The key is written to Windows Credential Manager and never read back into this page
 function saveKey(value) {
     return api().set_api_key(value, $('ai_provider').value).then(res => {
@@ -147,6 +201,7 @@ for (const key of TOGGLES) {
 }
 document.querySelectorAll('input[name=anchor]').forEach(r => r.addEventListener('change', () => { save('anchor', r.value); syncPositionRow(); }));
 $('monitor').addEventListener('change', () => save('monitor', parseInt($('monitor').value, 10)));
+$('island_priority').addEventListener('change', () => save('island_priority', $('island_priority').value));
 $('motion').addEventListener('change', () => save('motion', $('motion').value));
 $('lumi_idle').addEventListener('change', () => save('lumi_idle', $('lumi_idle').value));
 $('lumi_visible').addEventListener('change', () => $('row-lumi-idle').classList.toggle('disabled', !$('lumi_visible').checked));
@@ -164,7 +219,7 @@ $('sound_volume').addEventListener('change', () => {
 $('form-hotkey').addEventListener('submit', e => { e.preventDefault(); save('hotkey', $('hotkey').value, $('msg-hotkey')).then(r => { if (r.ok) load(); }); });
 $('ai_provider').addEventListener('change', () => {
     const name = $('ai_provider').value;
-    save('ai_provider', name, $('msg-ai')).then(r => { if (r.ok) values.ai_provider = name; });
+    save('ai_provider', name, $('msg-ai')).then(r => { if (r.ok) { values.ai_provider = name; refreshAiStatus(); } });
     syncProvider();
 });
 $('form-model').addEventListener('submit', e => {

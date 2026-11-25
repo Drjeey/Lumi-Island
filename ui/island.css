@@ -75,6 +75,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #island.idle.act-toast { width: 240px; }
 #island.idle.act-volume { width: 210px; }
 #island.idle.act-focus { width: 220px; border-color: rgba(245, 184, 61, 0.35); }
+#island.idle.act-focus.with-agent { width: 256px; }
 #island.idle.act-media { width: 232px; }
 #island.idle.act-agent { width: 270px; }
 .compact { gap: 8px; padding: 0 14px; box-sizing: border-box; font-size: 13px; font-weight: 600; }
@@ -105,6 +106,11 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #volume-ui .bar i { display: block; height: 100%; width: 0; background: var(--text); border-radius: 2px; transition: width 0.12s; }
 #volume-ui .val { width: 30px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); }
 #focus-ui { color: var(--amber); }
+/* An agent is working while the focus timer shows: a small badge that opens the Agents panel */
+.agent-badge { flex: none; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; color: var(--blue); background: rgba(10, 132, 255, 0.16); }
+.agent-badge[hidden] { display: none; }
+.agent-badge svg.icon { width: 14px; height: 14px; animation: blink-dots 1.4s ease-in-out infinite; }
+.agent-badge:hover, .agent-badge:focus-visible { background: rgba(10, 132, 255, 0.3); }
 #focus-ui .label { color: var(--text); flex: 1; }
 #focus-timer { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text); }
 #focus-progress { position: absolute; left: 14px; right: 14px; bottom: 3px; height: 2px; border-radius: 1px; background: rgba(245, 184, 61, 0.18); overflow: hidden; }
@@ -224,6 +230,24 @@ button.tile span { font-size: 11px; color: var(--text-2); }
 .msg { max-width: 84%; padding: 7px 11px; border-radius: 14px; font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg.user { align-self: flex-end; background: linear-gradient(180deg, #24467C, #1B3560); box-shadow: var(--lift); border-bottom-right-radius: 4px; }
 .msg.lumi { align-self: flex-start; background: var(--surface); box-shadow: var(--lift); border-bottom-left-radius: 4px; }
+.save-indicator.failed { color: var(--red); }
+/* Lumi's formatted answers (lumi-markdown.js) */
+.msg.md { white-space: normal; min-width: 0; }
+.msg.md > * { margin: 0; }
+.msg.md > * + * { margin-top: 6px; }
+.msg.md .md-h { font-weight: 650; }
+.msg.md ul, .msg.md ol { padding-left: 18px; }
+.msg.md li + li { margin-top: 2px; }
+.msg.md strong { font-weight: 650; }
+.msg.md code { font-family: Consolas, 'Cascadia Mono', monospace; font-size: 12px; background: rgba(255,255,255,0.08); padding: 1px 4px; border-radius: 4px; }
+.msg.md pre { max-width: 100%; overflow-x: auto; background: rgba(0,0,0,0.28); padding: 6px 8px; border-radius: 8px; white-space: pre; }
+.msg.md pre code { background: none; padding: 0; }
+.msg.md pre::-webkit-scrollbar { height: 6px; }
+.msg.md pre::-webkit-scrollbar-thumb { background: #2A2A30; border-radius: 3px; }
+.msg.md pre::-webkit-scrollbar-track, .msg.md pre::-webkit-scrollbar-corner { background: transparent; }
+.msg.md pre::-webkit-scrollbar-button { display: none; }
+.msg.md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.12); }
+.msg.md .md-url { color: var(--text-2); }
 .msg.error { align-self: flex-start; background: transparent; color: var(--text-2); padding-left: 4px; }
 .msg.error::before { content: ''; display: inline-block; width: 13px; height: 13px; margin-right: 5px; vertical-align: -2px; background: var(--red); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7.5v5.5M12 16.5v.01'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7.5v5.5M12 16.5v.01'/%3E%3C/svg%3E") center / contain no-repeat; }
 /* The way out of an error: Open Settings or Try again, right where the error is */
