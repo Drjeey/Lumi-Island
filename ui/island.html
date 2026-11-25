@@ -102,7 +102,7 @@
         <div class="content compact" id="status-ui"><svg class="icon" aria-hidden="true"><use id="status-icon" href="#i-mic"/></svg><span id="status-text" class="ellipsis" aria-hidden="true">Listening</span><button type="button" class="status-stop" id="status-stop" aria-label="Stop" title="Stop (Esc)"><svg class="icon"><use href="#i-stop"/></svg></button></div>
         <div class="content compact" id="toast-ui" aria-hidden="true"><svg class="icon" style="color:var(--green)"><use href="#i-check"/></svg><span id="toast-text" class="ellipsis"></span></div>
         <div class="content compact" id="volume-ui" aria-hidden="true"><svg class="icon"><use id="volume-icon" href="#i-volume"/></svg><div class="bar"><i id="volume-bar"></i></div><span class="val" id="volume-val">0</span></div>
-        <div class="content compact" id="focus-ui" aria-hidden="true"><svg class="icon"><use href="#i-hourglass"/></svg><span class="label" id="focus-label">Focus</span><span id="focus-timer">25:00</span><div id="focus-progress"><i id="focus-progress-bar"></i></div></div>
+        <div class="content compact" id="focus-ui" aria-hidden="true"><svg class="icon"><use href="#i-hourglass"/></svg><span class="label" id="focus-label">Focus</span><span id="focus-timer">25:00</span><div id="focus-progress"><i id="focus-progress-bar"></i></div><button type="button" id="focus-agent" class="agent-badge" hidden aria-label="An agent is working"><svg class="icon"><use href="#i-agent"/></svg></button></div>
         <div class="content compact" id="agent-ui" aria-hidden="true"><svg class="icon"><use href="#i-agent"/></svg><span class="ellipsis" id="agent-current"></span><div class="agent-dots" id="agent-dots"></div></div>
         <div class="content compact" id="media-ui" aria-hidden="true"><div class="art" id="media-art"><svg class="icon"><use href="#i-music"/></svg></div><span class="title ellipsis" id="media-title"></span><div class="eq" id="media-eq"><i></i><i></i><i></i><i></i></div></div>
 
@@ -137,7 +137,7 @@
             </div>
             <div class="controls">
                 <button class="btn-media" type="button" data-media="prev" aria-label="Previous track"><svg class="icon"><use href="#i-prev"/></svg></button>
-                <button class="btn-media primary" type="button" data-media="play" id="btn-play" aria-label="Play"><svg class="icon solid"><use id="play-icon" href="#i-play"/></svg></button>
+                <button class="btn-media primary" type="button" data-media="toggle" id="btn-play" aria-label="Play"><svg class="icon solid"><use id="play-icon" href="#i-play"/></svg></button>
                 <button class="btn-media" type="button" data-media="next" aria-label="Next track"><svg class="icon"><use href="#i-next"/></svg></button>
             </div>
         </div>
@@ -212,6 +212,7 @@
     <script src="lumi-skins.js"></script>
     <script src="lumi-sounds.js"></script>
     <script src="lumi-guides.js"></script>
+    <script src="lumi-markdown.js"></script>
     <script src="island.js"></script>
 </body>
 </html>

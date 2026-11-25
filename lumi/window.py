@@ -12,7 +12,7 @@ from pathlib import Path
 
 import webview
 
-from . import bridge
+from . import bridge, providers
 from .api import IslandAPI, SettingsAPI
 from .activity import ActivityBus
 from .agents import AgentManager
@@ -58,6 +58,8 @@ class IslandController:
         self.window = None
         self.settings_window = None
         self._hwnd = None  # set once the window is shown
+        self._keyed_out = False  # the see-through background is set up (see _key_out_background)
+        self._backdrop_guard = None
         self._scale = None  # physical pixels per CSS pixel, learned from the page
         self._pointer_tracking = threading.Event()  # set while a panel is open
         self._stats_watching = threading.Event()  # set while the dashboard is open
@@ -120,7 +122,7 @@ class IslandController:
             self.window.evaluate_js(f"window.updateState && window.updateState({safe_json})")
 
     PREF_KEYS = ('motion', 'lumi_visible', 'lumi_idle', 'scroll_volume', 'hotkey', 'lumi_color', 'celebrations',
-                 'skin', 'seasonal_skins', 'sounds', 'sound_volume')
+                 'skin', 'seasonal_skins', 'sounds', 'sound_volume', 'island_priority')
 
     def active_skin(self):
         """The skin Lumi wears today: a festive one when that's on and it's the season, otherwise the chosen one."""
@@ -175,13 +177,14 @@ class IslandController:
         if key == 'sound_volume' and not 0 <= value <= 100: return 'Choose a volume from 0 to 100.'
         if key == 'monitor' and value < 0: return 'Unknown display.'
         if key == 'lumi_idle' and value not in ('peek', 'always'): return 'Unknown choice.'
+        if key == 'island_priority' and value not in ('focus', 'agent'): return 'Unknown choice.'
         if key == 'voice_mode' and value not in ('standard', 'live'): return 'Unknown voice mode.'
         if key == 'voice_engine' and value not in ('natural', 'windows'): return 'Unknown voice.'
         if key == 'voice_name' and value not in VOICES: return 'Unknown voice.'
         if key == 'ai_provider' and value not in PROVIDERS: return 'Unknown provider.'
         if key in AI_KEYS and key.endswith('_model') and key != 'gemini_backup_model' and not value.strip():
             return 'Enter a model name.'
-        if key == 'custom_url' and not value.startswith(('http://', 'https://')): return 'Enter a URL starting with http:// or https://.'
+        if key == 'custom_url' and (problem := providers.check_custom_url(value)): return problem
         self.config[key] = value
         self.config.save()
         if key == 'auto_start': self._apply_auto_start()
@@ -191,15 +194,18 @@ class IslandController:
         if key in self.PREF_KEYS: self.push('prefs', self.prefs())
         return None
 
-    def open_settings(self):
+    def open_settings(self, page=None):
+        """Opens Settings, on a given page (general, lumi, ai, guides, about) when asked."""
         if self.settings_window:
             self.settings_window.show()
             self.settings_window.restore()
             self._bring_settings_forward()
+            if page:
+                self.settings_window.evaluate_js(f"window.showPage && window.showPage({json.dumps(page)})")
             return
         dark = _windows_uses_dark_theme()
         self.settings_window = webview.create_window(
-            'Lumi Island settings', url='ui/settings.html', js_api=SettingsAPI(self),
+            'Lumi Island settings', url='ui/settings.html' + (f'#{page}' if page else ''), js_api=SettingsAPI(self),
             width=760, height=640, min_size=(560, 480), background_color='#202020' if dark else '#F3F3F3')
         self.settings_window.events.closed += self._settings_closed
         self.settings_window.events.shown += self._bring_settings_forward
@@ -435,31 +441,40 @@ class IslandController:
             user32.SetWindowPos(self._hwnd, None, 0, 0, r.right - r.left, wanted, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)
 
     # --- transparency and hit areas ---
-    def _on_shown(self, *args):
-        # With transparent=True, WebView2 shows the WinForms form behind the page (grey by default).
-        # Paint that form in TRANSPARENT_KEY and make it a layered window where pixels of exactly
-        # that color are invisible, leaving only the island and Lumi on screen
-        try:
-            form = self.window.native
-            from System import Action
-            from System.Drawing import ColorTranslator
-            form.Invoke(Action(lambda: setattr(form, 'BackColor', ColorTranslator.FromHtml(TRANSPARENT_KEY))))
-            hwnd = ctypes.c_void_p(form.Handle.ToInt64())
-        except Exception as e:
-            print(f"Transparency Error: {e}")
-            return
-        # pywebview gives windows a Mica backdrop in dark mode, which would fill the keyed-out pixels
-        DWMWA_SYSTEMBACKDROP_TYPE, DWMSBT_NONE = 38, 1
-        backdrop = ctypes.c_int(DWMSBT_NONE)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ctypes.byref(backdrop), ctypes.sizeof(backdrop))
-
+    def _key_out_background(self):
+        """With transparent=True, WebView2 shows the WinForms form behind the page (grey by default).
+        Paint that form in TRANSPARENT_KEY and make it a layered window where pixels of exactly that color
+        are invisible, leaving only the island and Lumi on screen. Runs on the window's own thread from
+        before_show, so the window is never on screen without it."""
+        form = self.window.native
+        from System.Drawing import ColorTranslator
+        from Microsoft.Win32 import SystemEvents
+        form.BackColor = ColorTranslator.FromHtml(TRANSPARENT_KEY)
+        hwnd = ctypes.c_void_p(form.Handle.ToInt64())
+        _remove_backdrop(hwnd)
         GWL_EXSTYLE, WS_EX_LAYERED, LWA_COLORKEY = -20, 0x80000, 0x1
         user32.GetWindowLongW.restype = ctypes.c_long
         style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
         r, g, b = (int(TRANSPARENT_KEY[i:i + 2], 16) for i in (1, 3, 5))
         user32.SetLayeredWindowAttributes(hwnd, r | (g << 8) | (b << 16), 0, LWA_COLORKEY)
+        # pywebview puts the Mica backdrop back in dark mode every time Windows broadcasts a settings change
+        # (theme, accent, wallpaper, setx...), which filled the see-through area with a grey slab until restart.
+        # Its handler was added when the form was built, so this one runs after it and takes Mica off again.
+        self._backdrop_guard = lambda *a: _remove_backdrop(hwnd)
+        SystemEvents.UserPreferenceChanged += self._backdrop_guard
+        self._keyed_out = True
 
+    def _on_shown(self, *args):
+        try:
+            form = self.window.native
+            if not self._keyed_out:  # before_show didn't manage it: do it now
+                from System import Action
+                form.Invoke(Action(self._key_out_background))
+            hwnd = ctypes.c_void_p(form.Handle.ToInt64())
+        except Exception as e:
+            print(f"Transparency Error: {e}")
+            return
         self._hwnd = hwnd
         self._snap()
         for watcher in (self._watch_visibility, self._watch_pointer, self._watch_stats):
@@ -477,6 +492,7 @@ class IslandController:
         from System import Action
         from System.Drawing import Bitmap, Graphics, SolidBrush, ColorTranslator, Rectangle
         from System.Drawing.Drawing2D import GraphicsPath
+        from System.Drawing.Imaging import PixelFormat
 
         self._scale = form.ClientSize.Width / page_width  # CSS pixels -> physical pixels
         if content_height:
@@ -487,7 +503,10 @@ class IslandController:
             if w <= 0 or h <= 0:
                 return
             scale = w / page_width
-            bmp = Bitmap(w, h)
+            # No alpha channel: WinForms treats a background image with one as see-through and, on a window with
+            # no parent, first fills it with SystemColors.Control (#F0F0F0). The form isn't double-buffered, so
+            # that light grey fill sometimes reached the screen for a frame: the island's white flash
+            bmp = Bitmap(w, h, PixelFormat.Format24bppRgb)
             g = Graphics.FromImage(bmp)
             g.Clear(ColorTranslator.FromHtml(TRANSPARENT_KEY))
             brush = SolidBrush(ColorTranslator.FromHtml(HIT_COLOR))
@@ -551,6 +570,7 @@ class IslandController:
             x=geo.get('x') if free else None, y=geo.get('y') if free else 0,
             js_api=self.api
         )
+        self.window.events.before_show += self._key_out_background
         self.window.events.moved += self._on_moved
         self.window.events.shown += self._on_shown
         webview.start(debug=False, http_server=True, storage_path=str(STORAGE_PATH))
@@ -569,6 +589,13 @@ def _seconds_since_input():
     if not user32.GetLastInputInfo(ctypes.byref(info)):
         return 0
     return ((ctypes.windll.kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF) / 1000
+
+
+def _remove_backdrop(hwnd):
+    # pywebview gives windows a Mica backdrop in dark mode, which would fill the keyed-out pixels
+    DWMWA_SYSTEMBACKDROP_TYPE, DWMSBT_NONE = 38, 1
+    backdrop = ctypes.c_int(DWMSBT_NONE)
+    ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ctypes.byref(backdrop), ctypes.sizeof(backdrop))
 
 
 def _windows_uses_dark_theme():

@@ -738,7 +738,7 @@ class AgentManager:
     def _watch(self):
         while True:
             time.sleep(1.5)
-            if not self._ctrl.config.get('agent_watch', True):
+            if not self._ctrl.config.get('agent_watch', False):
                 continue
             try:
                 changed = self._watch_once()

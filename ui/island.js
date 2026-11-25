@@ -15,7 +15,7 @@ const dom = {
     card: $('card'), cardText: $('card-text'), cardStep: $('card-step'), cardPrimary: $('card-primary'), cardSecondary: $('card-secondary'),
     fpUi: $('focuspanel-ui'), fpTitle: $('fp-title'), fpToday: $('fp-today'), fpChips: $('fp-chips'), fpStart: $('fp-start'), fpTime: $('fp-time'),
     chatLog: $('chat-log'), chatForm: $('chat-form'), chatInput: $('chat-input'),
-    agentCurrent: $('agent-current'), agentDots: $('agent-dots'), agTabs: $('ag-tabs'), agSession: $('ag-session'), agTitle: $('ag-title'),
+    focusAgent: $('focus-agent'), agentCurrent: $('agent-current'), agentDots: $('agent-dots'), agTabs: $('ag-tabs'), agSession: $('ag-session'), agTitle: $('ag-title'),
     agSub: $('ag-sub'), agNodes: $('ag-nodes'), agEmpty: $('ag-empty'), agInput: $('ag-input'), agEdits: $('ag-edits'), agFolder: $('ag-folder'),
     agFolderName: $('ag-folder-name'), agPick: $('ag-pick'), agChat: $('ag-chat'), agChatId: $('ag-chat-id'), agNew: $('ag-new'),
     agLumi: $('ag-lumi'), agConfirm: $('ag-confirm'), agConfirmText: $('ag-confirm-text')
@@ -292,7 +292,7 @@ function onChatDelta(d) {
         if (typingEl) { typingEl.remove(); typingEl = null; }
         streamEl = addMessage('lumi', '');
     }
-    streamEl.textContent = d.text;
+    setMessageText(streamEl, d.text);
     layoutChat();
 }
 
@@ -456,6 +456,7 @@ function applyPrefs(p) {
     if (prefs.lumi_hex) document.documentElement.style.setProperty('--lumi', prefs.lumi_hex);
     setSkin(prefs.skin || 'classic');
     syncPeek();
+    if (state === 'idle') renderCompact();  // e.g. the focus-or-agent choice changed
     trackHitAreas(400);
 }
 // The skin lives in a data attribute: the mood replaces Lumi's class names, and this must survive that
@@ -500,15 +501,22 @@ function setIslandState(st) {
 let trackingPointer = false;
 
 // The compact island shows the most important live thing: status > confirmation > an agent at work > focus/break > now playing
+// While focus and an agent are both running, "focus" (the default) keeps the timer on the island with a small agent
+// badge; "agent" keeps the agent's steps. An agent that just finished or failed always gets its moment first.
 function renderCompact() {
     let act = '';
     const agent = shownAgent();
+    const timerFirst = focusRunning && prefs.island_priority !== 'agent' && agent && agent.status === 'running';
     if (statusActive) act = 'status';
     else if (toast) act = toast.kind;
+    else if (timerFirst) act = 'focus';
     else if (agent) act = 'agent';
     else if (focusRunning) act = 'focus';
     else if (media.active) act = 'media';
-    dom.island.className = 'idle' + (act ? ' act-' + act : '') + (act === 'focus' && focusKind === 'break' ? ' break' : '')
+    const badge = act === 'focus' && !!agent && agent.status === 'running';
+    dom.focusAgent.hidden = !badge;
+    if (badge) dom.focusAgent.setAttribute('aria-label', `${agent.agent_name} is working: ${agent.current}. Open the Agents panel`);
+    dom.island.className = 'idle' + (act ? ' act-' + act : '') + (act === 'focus' && focusKind === 'break' ? ' break' : '') + (badge ? ' with-agent' : '')
         + (act === 'status' && currentRun ? ' can-stop' : '') + (act === 'agent' && agent.status !== 'running' ? ' agent-' + (agent.status === 'done' ? 'done' : 'failed') : '')
         + ' pywebview-drag-region';
     if (act === 'agent') renderAgentPill(agent);
@@ -518,7 +526,7 @@ function renderCompact() {
 }
 function compactLabel(act) {
     if (act === 'media') return `Now playing: ${media.title || 'music'}${media.artist ? ' by ' + media.artist : ''}. Press Enter for the player`;
-    if (act === 'focus') return `${focusKind === 'break' ? 'Break' : 'Focus'}, ${dom.focusTime.textContent} left. Press Enter for the timer`;
+    if (act === 'focus') return `${focusKind === 'break' ? 'Break' : 'Focus'}, ${dom.focusTime.textContent} left${dom.focusAgent.hidden ? '' : ', and an agent is working'}. Press Enter for the timer`;
     if (act === 'toast') return dom.toastText.textContent;
     if (act === 'agent') {
         const s = shownAgent();
@@ -597,6 +605,7 @@ window.updateState = function(msg) {
         case 'lumi_action': showToast(data.text); celebrate(); return; // older tools; receipts replace this
         case 'activity': onActivity(data); return;
         case 'chat_delta': onChatDelta(data); return;
+        case 'note_added': onNoteAdded(data); return;
         case 'level': onLevel(data); return;
         case 'heard': showBubble('\u201C' + data.text + '\u201D', 0); dom.bubble.classList.add('heard'); return;
         case 'speech': onSpeech(data); return;
@@ -656,6 +665,7 @@ window.updateState = function(msg) {
     else if (st === 'idle' && EXPANDED.includes(state) && data.status) st = state;
     statusActive = statusShown && st === 'idle';
     if (st === 'focus' && 'durations' in data) { focusInfo = data; focusMinutes = data.last_minutes || 25; }
+    if (prevState === 'notes' && st !== 'notes') flushNote();  // leaving the note never drops what you just typed
     setIslandState(st);
     if (st !== prevState) maybeOfferGuide(st);
     if (statusActive) dom.island.setAttribute('aria-label', 'Lumi is ' + data.status);
@@ -677,7 +687,7 @@ window.updateState = function(msg) {
         lumiState.react('puzzled');
         if (currentRun) runErrorShown = true;
         // Something only Settings can fix gets a card with the button; anything else a short bubble
-        if (data.action === 'settings') showSettingsCard(data.text);
+        if (data.action === 'settings') showSettingsCard(data.text, 'ai');
         else showBubble(data.text, 6000, true);
     } else if (data.status === 'notice') {
         lumiState.react('notice');
@@ -689,7 +699,8 @@ window.updateState = function(msg) {
 
     if (st === 'dashboard' && 'ram' in data) renderStats(data);
     if (st === 'music' && 'active' in data) { media = data; renderMedia(); }
-    if (st === 'notes' && typeof data.note === 'string' && document.activeElement !== dom.notesArea) dom.notesArea.value = data.note;
+    // Unsaved text (after a failed save) wins over the file when the note opens again
+    if (st === 'notes' && typeof data.note === 'string' && document.activeElement !== dom.notesArea && !noteDirty) { dom.notesArea.value = data.note; savedNote = data.note; }
     if (st === 'notes') dom.notesUi.classList.toggle('empty', !dom.notesArea.value.trim());
     if (st === 'focus') renderFocusPanel();
     if (st === 'chat' && 'messages' in data) openChat(data.messages);
@@ -784,15 +795,28 @@ function showSummary(data) {
 
 // --- CHAT ---
 function renderMessages(messages) {
-    dom.chatLog.innerHTML = messages.length
-        ? messages.map(m => `<div class="msg ${m.role === 'user' ? 'user' : 'lumi'}">${escapeHtml(m.text)}</div>`).join('')
-        : '<div class="chat-empty">Ask me anything, or ask me to start a focus session, add to your note, or play the next song.</div>';
+    dom.chatLog.replaceChildren();
+    if (!messages.length) {
+        dom.chatLog.innerHTML = '<div class="chat-empty">Ask me anything, or ask me to start a focus session, add to your note, or play the next song.</div>';
+        return;
+    }
+    for (const m of messages) {
+        const div = document.createElement('div');
+        div.className = 'msg ' + (m.role === 'user' ? 'user' : 'lumi');
+        setMessageText(div, m.text);
+        dom.chatLog.appendChild(div);
+    }
+}
+// Your words stay plain text; Lumi's answers get light formatting (lumi-markdown.js builds nodes, never HTML)
+function setMessageText(div, text) {
+    if (div.classList.contains('lumi') && !div.classList.contains('typing')) LumiMarkdown.render(div, text);
+    else div.textContent = text;
 }
 function addMessage(cls, text) {
     dom.chatLog.querySelector('.chat-empty')?.remove();
     const div = document.createElement('div');
     div.className = 'msg ' + cls;
-    div.textContent = text;
+    setMessageText(div, text);
     dom.chatLog.appendChild(div);
     layoutChat();
     return div;
@@ -824,7 +848,8 @@ function sendChat(text) {
     const token = ++chatToken;
     lastQuestion = text;
     const compliment = /\b(thanks?|thank you|cute|adorable|love (you|u)|good job|well done|you('re| are) (great|amazing|the best|awesome))\b/i.test(text);
-    call('ask', text).then(res => {
+    // A call that fails outright (the bridge itself) still ends the request, with Try again and your question kept
+    call('ask', text).catch(e => { console.error('ask failed', e); return { error: "I couldn't reply.", action: 'retry' }; }).then(res => {
         if (token !== chatToken) return;  // you stopped this one
         if (typingEl) { typingEl.remove(); typingEl = null; }
         chatWaiting = false;
@@ -835,10 +860,14 @@ function sendChat(text) {
             if (streamEl) streamEl.classList.add('stopped');
             addMessage('note', 'Stopped');
         } else if (res && res.reply) {
-            if (streamEl) streamEl.textContent = res.reply; else addMessage('lumi', res.reply);
+            if (streamEl) setMessageText(streamEl, res.reply); else addMessage('lumi', res.reply);
             if (compliment) setTimeout(() => lumiState.react('shy'), 300);
         }
-        else { addError((res && res.error) || "I couldn't reply.", res && res.action); if (!runErrorShown) lumiState.react('puzzled'); }
+        else {
+            addError((res && res.error) || "I couldn't reply.", (res && res.action) || 'retry', text);
+            if (!runErrorShown) lumiState.react('puzzled');
+            if (!dom.chatInput.value) dom.chatInput.value = text;  // your question is back in the box, to edit or resend
+        }
         streamEl = null;
         layoutChat();
         if (state !== 'chat') return;
@@ -846,17 +875,18 @@ function sendChat(text) {
     });
 }
 // An error in the chat, with its way out next to it
-function addError(text, action) {
+function addError(text, action, question = lastQuestion) {
     const div = addMessage('error', text);
     if (action !== 'settings' && action !== 'retry') return;
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'msg-action';
-    b.textContent = action === 'settings' ? 'Open Settings' : 'Try again';
+    b.textContent = action === 'settings' ? 'Set up AI' : 'Try again';
     b.addEventListener('click', () => {
-        if (action === 'settings') { call('open_settings'); return; }
+        if (action === 'settings') { call('open_settings', 'ai'); return; }
         b.disabled = true;
-        sendChat(lastQuestion);
+        if (dom.chatInput.value.trim() === question.trim()) dom.chatInput.value = '';  // it's being sent again
+        sendChat(question);
     });
     div.appendChild(b);
     layoutChat();
@@ -872,8 +902,18 @@ function offerSounds() {
         onSecondary: () => call('answer_sounds', false)
     });
 }
-function showSettingsCard(text) {
-    showCard({ html: escapeHtml(text), primary: 'Open Settings', secondary: 'Not now', onPrimary: () => call('open_settings') });
+// First run with no AI behind Lumi: offer once to set it up (Python only offers it once)
+function offerAiSetup() {
+    if (dom.card.classList.contains('visible') || tourStep >= 0 || state !== 'idle') { setTimeout(offerAiSetup, 20000); return; }
+    lumiState.react('notice');
+    showCard({
+        html: 'I can chat once I have an AI to think with. It takes a minute: paste a free key, or use a model on this PC.',
+        primary: 'Set up chat', secondary: 'Later',
+        onPrimary: () => call('open_settings', 'ai')
+    });
+}
+function showSettingsCard(text, page) {
+    showCard({ html: escapeHtml(text), primary: page === 'ai' ? 'Set up AI' : 'Open Settings', secondary: 'Not now', onPrimary: () => call('open_settings', page) });
 }
 
 function setSendButton(working) {
@@ -1003,8 +1043,13 @@ function onAgents(d) {
     for (const s of agents.sessions) {
         if (!(s.id in before) && s.status === 'running') reactToContext('notice');  // a new session: Lumi looks up
         if (s.source === 'island' && before[s.id] !== 'running' && s.status === 'running') showBubble('On it.', 2200);
-        if (s.source === 'island' && before[s.id] === 'running' && s.status !== 'running' && s.status !== 'stopped' && state !== 'agents')
-            showBubble(s.status === 'done' ? `${s.agent_name} is done. Have a look?` : `That didn't work out. The Agents panel says why.`, 5000, s.status !== 'done');
+        // Finished or failed: say so for sessions you started here, and for ones you ran yourself that took a while
+        // (a quick one-line session isn't worth interrupting for). Not while the Agents panel is already open.
+        const longEnough = s.source === 'island' || (s.elapsed || 0) >= 20;
+        if (longEnough && before[s.id] === 'running' && s.status !== 'running' && s.status !== 'stopped' && state !== 'agents') {
+            const who = s.title ? `${s.agent_name}: “${s.title.length > 26 ? s.title.slice(0, 25) + '…' : s.title}”` : s.agent_name;
+            showBubble(s.status === 'done' ? `${who} is done. Have a look?` : `${who} hit a problem. The Agents panel says why.`, 7000, s.status !== 'done');
+        }
         if (before[s.id] === 'running' && s.status !== 'running') {
             agentEnded[s.id] = performance.now();
             lumiState.react(s.status === 'done' ? 'success' : s.status === 'failed' ? 'puzzled' : 'nod');
@@ -1412,10 +1457,11 @@ dom.mic.addEventListener('click', e => { e.stopPropagation(); call('start_listen
 $('btn-notes').addEventListener('click', () => call('open_notes'));
 dom.btnFocus.addEventListener('click', () => call('open_focus'));
 $('btn-agents').addEventListener('click', () => call('open_agents'));
+dom.focusAgent.addEventListener('click', e => { e.stopPropagation(); call('open_agents'); });
 document.querySelectorAll('[data-media]').forEach(b => b.addEventListener('click', () => call('media', b.dataset.media)));
 $('menu-settings').addEventListener('click', () => { call('open_settings'); collapseSoon(); });
 $('menu-hide').addEventListener('click', () => { collapseSoon(); call('hide_for', 60); });
-$('menu-quit').addEventListener('click', () => call('quit'));
+$('menu-quit').addEventListener('click', () => { flushNote(); call('quit'); });
 // Guides: the command bar, listing every guide (type to narrow it down)
 $('menu-guides').addEventListener('click', () => {
     collapseSoon();
@@ -1431,13 +1477,43 @@ function collapseSoon() { clearTimeout(collapseTimer); collapseTimer = setTimeou
 
 dom.notesArea.addEventListener('input', () => {
     dom.notesUi.classList.toggle('empty', !dom.notesArea.value.trim());
+    noteDirty = true;
     clearTimeout(saveTimeout);
-    saveTimeout = setTimeout(() => {
-        call('save_note', dom.notesArea.value);
-        dom.saveMsg.style.opacity = '1';
-        setTimeout(() => dom.saveMsg.style.opacity = '0', 1000);
-    }, 800);
+    saveTimeout = setTimeout(flushNote, 800);
 });
+// The note is saved a moment after you stop typing, and "Saved" shows only once Python says the file was written.
+// A failed save keeps your text in the box and says so; the next keystroke (or leaving the panel) tries again.
+let savedNote = null, noteDirty = false, saveMsgTimer = null;
+function flushNote() {
+    clearTimeout(saveTimeout);
+    saveTimeout = null;
+    if (!noteDirty) return;  // nothing typed since the last good save
+    const text = dom.notesArea.value;
+    noteDirty = false;
+    call('save_note', text).then(res => {
+        const ok = res && res.ok;
+        if (ok) savedNote = text;
+        else noteDirty = true;  // still unsaved: the next keystroke or leaving the panel tries again
+        dom.saveMsg.textContent = ok ? 'Saved' : "Couldn't save";
+        dom.saveMsg.classList.toggle('failed', !ok);
+        dom.saveMsg.style.opacity = '1';
+        clearTimeout(saveMsgTimer);
+        if (ok) saveMsgTimer = setTimeout(() => dom.saveMsg.style.opacity = '0', 1000);
+    }, () => { noteDirty = true; dom.saveMsg.textContent = "Couldn't save"; dom.saveMsg.classList.add('failed'); dom.saveMsg.style.opacity = '1'; });
+}
+// Lumi (or the command bar) added a line while the note is open: unsaved typing keeps the line too, so neither is lost
+function onNoteAdded(d) {
+    if (state !== 'notes') return;
+    if (!noteDirty) dom.notesArea.value = d.note;
+    else {
+        const typed = dom.notesArea.value.replace(/\n+$/, '');
+        dom.notesArea.value = (typed ? typed + '\n' : '') + d.line;
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(flushNote, 800);
+    }
+    savedNote = d.note;
+    dom.notesUi.classList.toggle('empty', !dom.notesArea.value.trim());
+}
 
 // Removed manual drag logic to use Native Dragging
 // Right-click opens the menu, except in a text field, where it must not swap the panel you're typing in
@@ -1714,7 +1790,8 @@ function init() {
         if (info.guides) guidesInfo = info.guides;
         if (info.onboarding) { onboardingPending = true; setTimeout(startOnboarding, 1200); }
         else if (info.greeting) setTimeout(() => greet(info.greeting), 800);
-        if (info.offer_sounds) setTimeout(offerSounds, 6000);
+        if (info.offer_ai) setTimeout(offerAiSetup, 9000);  // after the tour; it waits if the tour or another card is up
+        if (info.offer_sounds) setTimeout(offerSounds, info.offer_ai ? 40000 : 6000);
     });
     call('activity_snapshot').then(e => { if (e) { currentRun = e.run; lastSeq = e.seq - 1; onActivity(e); } });
     // Follow Windows if its reduced-motion setting changes while Lumi is running
